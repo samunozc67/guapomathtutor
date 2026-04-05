@@ -28,7 +28,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (snap.exists()) {
           setUser(snap.data() as User);
         } else {
-          // New user — default role teacher (admin sets role later)
           const newUser: User = {
             uid: fbUser.uid,
             email: fbUser.email!,
