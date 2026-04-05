@@ -1,7 +1,0 @@
-{
-  "name": "GuapoMathTutor Pro",
-  "description": "Un tutor de matemáticas interactivo paso a paso para estudiantes de 8.º grado (STAAR Texas).",
-  "requestFramePermissions": [
-    "microphone"
-  ]
-}
