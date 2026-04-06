@@ -1,27 +1,49 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
+import { useState } from 'react';
+import { useAuth } from './contexts/AuthContext';
+import { useLang } from './contexts/LangContext';
+import LoginPage from './components/auth/LoginPage';
+import TeacherDashboard from './components/dashboard/TeacherDashboard';
+import ProblemBank from './components/problems/ProblemBank';
+import AITutor from './components/tutor/AITutor';
+import Reports from './components/reports/Reports';
+import { Problem } from './types';
 
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { AuthProvider } from "./context/AuthContext";
-import { Layout } from "./components/Layout";
-import { Home } from "./pages/Home";
-import { Tutor } from "./pages/Tutor";
-import { Reports } from "./pages/Reports";
+type View = 'dashboard' | 'problems' | 'tutor' | 'reports';
 
 export default function App() {
+  const { user, loading } = useAuth();
+  const { lang } = useLang();
+  const [view, setView] = useState<View>('dashboard');
+  const [tutorProblem, setTutorProblem] = useState<Problem | null>(null);
+
+  const navigate = (v: string, data?: unknown) => {
+    setView(v as View);
+    if (v === 'tutor' && data) {
+      setTutorProblem(data as Problem);
+    } else if (v !== 'tutor') {
+      setTutorProblem(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-logo">
+          <span>🧮</span>
+          <p>{lang === 'en' ? 'Loading...' : 'Cargando...'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return <LoginPage />;
+
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index element={<Home />} />
-            <Route path="tutor" element={<Tutor />} />
-            <Route path="reports" element={<Reports />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+    <>
+      {view === 'dashboard' && <TeacherDashboard onNavigate={navigate} />}
+      {view === 'problems' && <ProblemBank onNavigate={navigate} />}
+      {view === 'tutor' && <AITutor onNavigate={navigate} initialProblem={tutorProblem} />}
+      {view === 'reports' && <Reports onNavigate={navigate} />}
+    </>
   );
 }
