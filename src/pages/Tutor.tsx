@@ -9,32 +9,21 @@ import { Upload, Send, Mic, MicOff, CheckCircle2, AlertCircle, Copy, Download, I
 import { GoogleGenAI } from "@google/genai";
 import Markdown from "react-markdown";
 
-// Initialize Gemini API
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// ✅ FIX 1: Vite requires import.meta.env, not process.env
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
 const cleanMathText = (text: string) => {
   let cleaned = text;
-  
-  // Replace specific variables with $
   cleaned = cleaned.replace(/\$x\$/gi, 'X');
   cleaned = cleaned.replace(/\$y\$/gi, 'Y');
   cleaned = cleaned.replace(/\$m\$/gi, 'M');
-  
-  // Remove all remaining $ signs
   cleaned = cleaned.replace(/\$/g, '');
-  
-  // Replace \frac{a}{b} with (a) / (b)
   cleaned = cleaned.replace(/\\frac\s*\{([^}]+)\}\s*\{([^}]+)\}/g, '($1) / ($2)');
-  
-  // Replace subscripts
   cleaned = cleaned.replace(/y_2/gi, 'Y2');
   cleaned = cleaned.replace(/y_1/gi, 'Y1');
   cleaned = cleaned.replace(/x_2/gi, 'X2');
   cleaned = cleaned.replace(/x_1/gi, 'X1');
-  
-  // Remove remaining LaTeX brackets
   cleaned = cleaned.replace(/\\\(/g, '').replace(/\\\)/g, '').replace(/\\\[/g, '').replace(/\\\]/g, '');
-  
   return cleaned;
 };
 
@@ -56,12 +45,11 @@ export function Tutor() {
   const [errorCount, setErrorCount] = useState(0);
   const [summary, setSummary] = useState("");
   const [showMobileImage, setShowMobileImage] = useState(false);
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatRef = useRef<any>(null);
 
-  // Auto-scroll to bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -69,7 +57,6 @@ export function Tutor() {
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64String = reader.result as string;
@@ -82,17 +69,16 @@ export function Tutor() {
   const startTutoringSession = async (base64Image: string) => {
     setIsProcessing(true);
     try {
-      // Create a new chat session with system instructions
+      // ✅ FIX 2: Use a valid Gemini model name
       chatRef.current = ai.chats.create({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-2.5-flash",
         config: {
           systemInstruction: `Quiero que crees una aplicación web completa llamada GuapoMathTutor Pro.
 Su objetivo es, mediante la foto de un problema de matemáticas de 8.º grado del currículum de la prueba estatal STAAR del estado de Texas, ayudar a un usuario a responder la pregunta, paso a paso, solo después de recibir instrucción del usuario, vía escrita o vía voz. Si el usuario no sabe qué hacer y dice "necesito ayuda", la app le dirá el paso necesario para comenzar la solución del problema o indicará el próximo paso en la solución del problema. La solución no puede saltarse ni un solo paso que implique realizar operaciones matemáticas, las cuales el usuario deberá realizar de forma independiente. Cuando haya realizado la operación matemática o formulado la fórmula para solucionar el problema, el usuario deberá escribir la respuesta y la app la comparará con la correcta. Si hay algún error, la app deberá explicarlo antes de continuar al siguiente paso. Al terminar de resolver el problema mostrado en una foto, se generará un resumen de los pasos realizados, incluidos los errores. El informe debe incluir el nombre del estudiante. Todo debe realizarse desde una sola plataforma, con una experiencia moderna, clara y totalmente funcional. Cuando el problema esté completamente resuelto, debes incluir la palabra "PROBLEM_SOLVED" al final de tu mensaje.
 REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones matemáticas de forma limpia y simple. ESTÁ ESTRICTAMENTE PROHIBIDO usar formato LaTeX (prohibido usar $, $$, \\(, \\), \\[, \\], \\frac). NO agregues símbolos extraños anexados a las letras o números. Usa texto plano claro. Por ejemplo, en lugar de escribir $m = \\frac{y_2 - y_1}{x_2 - x_1}$, debes escribir M = (Y_2 - Y_1) / (X_2 - X_1). En lugar de $x$ o $y$, escribe simplemente X o Y en mayúsculas.`,
-        }
+        },
       });
 
-      // Extract base64 data without the data:image/jpeg;base64, prefix
       const base64Data = base64Image.split(',')[1];
       const mimeType = base64Image.split(';')[0].split(':')[1];
 
@@ -101,26 +87,24 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
           {
             inlineData: {
               data: base64Data,
-              mimeType: mimeType
-            }
+              mimeType: mimeType,
+            },
           },
-          "Aquí está mi problema de matemáticas. Por favor, ayúdame a resolverlo paso a paso."
-        ]
+          "Aquí está mi problema de matemáticas. Por favor, ayúdame a resolverlo paso a paso.",
+        ],
       });
 
       setMessages([
-        { id: Date.now().toString(), role: "model", text: response.text }
+        { id: Date.now().toString(), role: "model", text: response.text },
       ]);
     } catch (error: any) {
       console.error("Error starting session:", error);
       let errorMessage = "Hubo un error al analizar la imagen. Por favor, intenta subirla de nuevo.";
-      
       if (error?.message?.includes("429") || error?.status === "RESOURCE_EXHAUSTED" || error?.message?.includes("quota")) {
-        errorMessage = "⚠️ Has excedido el límite de uso gratuito de la Inteligencia Artificial (Error 429: Cuota excedida). Por favor, espera un momento antes de volver a intentarlo o revisa tu plan en Google AI Studio.";
+        errorMessage = "⚠️ Has excedido el límite de uso de la IA (Error 429). Por favor, espera un momento antes de volver a intentarlo.";
       }
-      
       setMessages([
-        { id: Date.now().toString(), role: "model", text: errorMessage, isError: true }
+        { id: Date.now().toString(), role: "model", text: errorMessage, isError: true },
       ]);
     } finally {
       setIsProcessing(false);
@@ -133,7 +117,7 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
 
     const userText = input.trim();
     setInput("");
-    
+
     const newUserMsg: Message = { id: Date.now().toString(), role: "user", text: userText };
     setMessages(prev => [...prev, newUserMsg]);
     setIsProcessing(true);
@@ -141,14 +125,13 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
     try {
       const response = await chatRef.current.sendMessage({ message: userText });
       let modelText = response.text;
-      
-      // Check if the model indicates the student made an error (heuristic: looking for correction words)
-      // A better way is to ask the model to output a specific JSON, but for natural chat we can use heuristics
-      // or just rely on the final summary. We'll track explicit "incorrecto" or "error".
-      const isError = modelText.toLowerCase().includes("incorrecto") || modelText.toLowerCase().includes("error") || modelText.toLowerCase().includes("no es correcto");
-      if (isError) {
-        setErrorCount(prev => prev + 1);
-      }
+
+      const isError =
+        modelText.toLowerCase().includes("incorrecto") ||
+        modelText.toLowerCase().includes("error") ||
+        modelText.toLowerCase().includes("no es correcto");
+
+      if (isError) setErrorCount(prev => prev + 1);
 
       let isCompleted = false;
       if (modelText.includes("PROBLEM_SOLVED")) {
@@ -158,18 +141,13 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
 
       setMessages(prev => [...prev, { id: Date.now().toString(), role: "model", text: modelText, isError }]);
 
-      if (isCompleted) {
-        await finishSession();
-      }
-
+      if (isCompleted) await finishSession();
     } catch (error: any) {
       console.error("Error sending message:", error);
       let errorMessage = "Lo siento, hubo un problema de conexión. ¿Puedes repetir eso?";
-      
       if (error?.message?.includes("429") || error?.status === "RESOURCE_EXHAUSTED" || error?.message?.includes("quota")) {
-        errorMessage = "⚠️ Has excedido el límite de uso gratuito de la Inteligencia Artificial (Error 429: Cuota excedida). Por favor, espera un momento antes de volver a intentarlo o revisa tu plan en Google AI Studio.";
+        errorMessage = "⚠️ Has excedido el límite de uso de la IA (Error 429). Por favor, espera un momento.";
       }
-      
       setMessages(prev => [...prev, { id: Date.now().toString(), role: "model", text: errorMessage, isError: true }]);
     } finally {
       setIsProcessing(false);
@@ -180,24 +158,26 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
     setSessionCompleted(true);
     setIsProcessing(true);
     try {
-      // Ask Gemini to generate a summary
       const summaryResponse = await chatRef.current.sendMessage({
-        message: `El problema ha sido resuelto. Por favor, genera un resumen detallado de los pasos realizados para resolver este problema, incluyendo los errores que cometió el estudiante y cómo se corrigieron. El nombre del estudiante es ${user?.displayName || 'Estudiante'}. Formatea el resumen en Markdown.`
+        message: `El problema ha sido resuelto. Por favor, genera un resumen detallado de los pasos realizados para resolver este problema, incluyendo los errores que cometió el estudiante y cómo se corrigieron. El nombre del estudiante es ${user?.displayName || 'Estudiante'}. Formatea el resumen en Markdown.`,
       });
-      
+
       const finalSummary = summaryResponse.text;
       setSummary(finalSummary);
 
-      // Save to Firestore
       if (user) {
         await addDoc(collection(db, "sessions"), {
           userId: user.uid,
           studentName: user.displayName || "Estudiante",
           status: "completed",
-          startTime: serverTimestamp(), // Ideally we'd track actual start time
+          startTime: serverTimestamp(),
           errorCount: errorCount,
           summary: finalSummary,
-          transcript: messages.map(m => ({ role: m.role, text: m.text, timestamp: new Date().toISOString() }))
+          transcript: messages.map(m => ({
+            role: m.role,
+            text: m.text,
+            timestamp: new Date().toISOString(),
+          })),
         });
       }
     } catch (error) {
@@ -207,24 +187,21 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
     }
   };
 
-  // Voice Recognition (Web Speech API)
   const toggleListening = async () => {
     if (isListening) {
       setIsListening(false);
-      // Stop logic handled by the API onend
       return;
     }
-
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      alert("No se pudo acceder al micrófono. Por favor, permite el acceso al micrófono en tu navegador (arriba a la izquierda en la barra de direcciones).");
+    } catch {
+      alert("No se pudo acceder al micrófono. Permite el acceso en tu navegador.");
       return;
     }
 
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert("Tu navegador no soporta reconocimiento de voz. Te recomendamos usar Google Chrome.");
+      alert("Tu navegador no soporta reconocimiento de voz. Usa Google Chrome.");
       return;
     }
 
@@ -232,35 +209,24 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
     recognition.lang = 'es-ES';
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => {
-      setIsListening(true);
-    };
-
+    recognition.onstart = () => setIsListening(true);
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
       setInput(prev => prev + (prev ? " " : "") + transcript);
     };
-
-    recognition.onerror = (event: any) => {
-      console.error("Speech recognition error", event.error);
-      setIsListening(false);
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-    };
-
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => setIsListening(false);
     recognition.start();
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-  };
+  const copyToClipboard = (text: string) => navigator.clipboard.writeText(text);
 
   const downloadReport = () => {
     const element = document.createElement("a");
-    const file = new Blob([`Reporte de Tutoría - ${user?.displayName}\n\n${summary}\n\n--- Transcripción ---\n${messages.map(m => `${m.role === 'user' ? 'Tú' : 'Tutor'}: ${m.text}`).join('\n\n')}`], {type: 'text/plain'});
+    const file = new Blob(
+      [`Reporte de Tutoría - ${user?.displayName}\n\n${summary}\n\n--- Transcripción ---\n${messages.map(m => `${m.role === 'user' ? 'Tú' : 'Tutor'}: ${m.text}`).join('\n\n')}`],
+      { type: 'text/plain' }
+    );
     element.href = URL.createObjectURL(file);
     element.download = `reporte_matematicas_${new Date().getTime()}.txt`;
     document.body.appendChild(element);
@@ -277,7 +243,7 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Tutor Interactivo</h1>
-          <p className="text-slate-600">Sube un problema y resolvámolo juntos.</p>
+          <p className="text-slate-600">Sube un problema y resolvámoslo juntos.</p>
         </div>
         {sessionCompleted && (
           <div className="flex gap-2">
@@ -315,7 +281,6 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
         </Card>
       ) : (
         <div className="flex-1 flex flex-col md:flex-row gap-6 min-h-0 relative">
-          {/* Mobile Image Modal */}
           {showMobileImage && (
             <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-4 md:hidden">
               <Button
@@ -330,12 +295,10 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
             </div>
           )}
 
-          {/* Image Preview Sidebar (Desktop) */}
           <div className="hidden md:flex w-1/3 flex-col gap-4">
             <Card className="p-2 bg-slate-100 overflow-hidden flex-shrink-0 relative">
               <img src={image} alt="Problema" className="w-full h-auto rounded object-contain max-h-[300px] md:max-h-none" />
             </Card>
-            
             {sessionCompleted && summary && (
               <Card className="flex-1 overflow-y-auto p-4 bg-green-50 border-green-200">
                 <h3 className="font-bold text-green-800 mb-2 flex items-center">
@@ -348,7 +311,6 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
             )}
           </div>
 
-          {/* Chat Area */}
           <Card className="flex-1 flex flex-col overflow-hidden">
             <div className="p-2 border-b border-slate-200 md:hidden flex justify-center bg-slate-50">
               <Button variant="outline" size="sm" onClick={() => setShowMobileImage(true)}>
@@ -357,17 +319,14 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
+                <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                   <div
                     className={`max-w-[85%] rounded-2xl px-4 py-3 ${
                       msg.role === "user"
                         ? "bg-blue-600 text-white rounded-br-none"
-                        : msg.isError 
-                          ? "bg-red-200 text-black border border-red-400 rounded-bl-none"
-                          : "bg-yellow-400 text-black font-medium rounded-bl-none shadow-sm"
+                        : msg.isError
+                        ? "bg-red-200 text-black border border-red-400 rounded-bl-none"
+                        : "bg-yellow-400 text-black font-medium rounded-bl-none shadow-sm"
                     }`}
                   >
                     {msg.role === "model" && msg.isError && (
@@ -393,7 +352,6 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input Area */}
             <div className="p-4 bg-white border-t border-slate-200">
               <form onSubmit={handleSendMessage} className="flex gap-2">
                 <Button
@@ -410,9 +368,14 @@ REGLA DE FORMATO MUY IMPORTANTE: Escribe los números, fórmulas y operaciones m
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   disabled={isProcessing || sessionCompleted}
+                  placeholder="Escribe tu respuesta..."
                   className="flex-1"
                 />
-                <Button type="submit" disabled={!input.trim() || isProcessing || sessionCompleted} className="flex-shrink-0">
+                <Button
+                  type="submit"
+                  disabled={!input.trim() || isProcessing || sessionCompleted}
+                  className="flex-shrink-0"
+                >
                   <Send className="h-4 w-4" />
                 </Button>
               </form>
