@@ -1,349 +1,988 @@
-import { useState, useRef, useEffect } from 'react';
-import { collection, addDoc, Timestamp } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
-import { useAuth } from '../../contexts/AuthContext';
-import { useLang } from '../../contexts/LangContext';
-import { Problem } from '../../types';
-import { PROBLEMS } from '../../data/problems';
+// ============================================================
+//  ESL MUÑOZ CONSTANZO — AITutor.tsx
+//  Rediseñado con sistema de marca oficial
+// ============================================================
 
+import { useState, useRef, useEffect } from "react";
+import { useLang } from "../../contexts/LangContext";
+import { useAuth } from "../../contexts/AuthContext";
+import type { Problem } from "../../types/index";
+
+// ── Tipos ────────────────────────────────────────────────────
 interface Message {
-  role: 'user' | 'assistant';
+  id: string;
+  role: "tutor" | "user";
   content: string;
+  timestamp: Date;
+  isLoading?: boolean;
 }
 
-interface TutorProps {
-  onNavigate: (view: string) => void;
-  initialProblem?: Problem | null;
+interface Step {
+  number: number;
+  title: string;
+  content: string;
+  done: boolean;
 }
 
-export default function AITutor({ onNavigate, initialProblem }: TutorProps) {
-  const { user } = useAuth();
-  const { lang } = useLang();
-  const t = (en: string, es: string) => lang === 'en' ? en : es;
+// ── Logo SVG ─────────────────────────────────────────────────
+const ESLLogo = ({ size = 28 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 48 48" fill="none">
+    <circle cx="24" cy="13" r="6.5" fill="#FF6B35" />
+    <path d="M10 28 Q5 18 15 20 Q13 25 18 28Z" fill="#0066CC" />
+    <path d="M38 28 Q43 18 33 20 Q35 25 30 28Z" fill="#2ECC71" />
+    <path d="M17 28 Q15 38 24 38 Q33 38 31 28 Q27 33 24 33 Q21 33 17 28Z" fill="#FF6B35" />
+  </svg>
+);
 
-  const [grade, setGrade] = useState<7 | 8>(initialProblem?.grade ?? 7);
-  const [problem, setProblem] = useState<Problem | null>(initialProblem ?? null);
-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
-  const [showResult, setShowResult] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
-  const [sessionComplete, setSessionComplete] = useState(false);
-  const [score, setScore] = useState({ correct: 0, total: 0 });
-  const chatRef = useRef<HTMLDivElement>(null);
+// ── Traducciones ─────────────────────────────────────────────
+const tr = {
+  es: {
+    title: "Tutor IA",
+    subtitle: "Aprende paso a paso con inteligencia artificial",
+    tutorName: "Tutor ESL",
+    welcomeMsg: "¡Hola! Soy tu tutor de matemáticas. Puedo ayudarte a resolver problemas STAAR paso a paso. ¿Con qué problema necesitas ayuda hoy?",
+    inputPlaceholder: "Escribe tu pregunta o pega un problema...",
+    send: "Enviar",
+    newChat: "Nueva sesión",
+    loadingMsg: "El tutor está pensando...",
+    you: "Tú",
+    steps: "Pasos de solución",
+    stepsDesc: "Sigue cada paso para entender la solución",
+    noSteps: "El tutor generará los pasos al resolver un problema.",
+    suggestions: [
+      "¿Cómo resuelvo una ecuación lineal?",
+      "Explícame el teorema de Pitágoras",
+      "¿Qué es la probabilidad?",
+      "¿Cómo calculo la pendiente de una recta?",
+    ],
+    problemLoaded: (teks: string) => `Problema cargado (${teks}). ¡Empecemos!`,
+    errorMsg: "Hubo un error al conectar con el tutor. Intenta de nuevo.",
+    copyBtn: "Copiar",
+    copied: "¡Copiado!",
+    clearChat: "Limpiar chat",
+    thinking: "Pensando",
+  },
+  en: {
+    title: "AI Tutor",
+    subtitle: "Learn step by step with artificial intelligence",
+    tutorName: "ESL Tutor",
+    welcomeMsg: "Hi! I'm your math tutor. I can help you solve STAAR problems step by step. What problem do you need help with today?",
+    inputPlaceholder: "Type your question or paste a problem...",
+    send: "Send",
+    newChat: "New session",
+    loadingMsg: "Tutor is thinking...",
+    you: "You",
+    steps: "Solution steps",
+    stepsDesc: "Follow each step to understand the solution",
+    noSteps: "The tutor will generate steps when solving a problem.",
+    suggestions: [
+      "How do I solve a linear equation?",
+      "Explain the Pythagorean theorem",
+      "What is probability?",
+      "How do I calculate the slope of a line?",
+    ],
+    problemLoaded: (teks: string) => `Problem loaded (${teks}). Let's get started!`,
+    errorMsg: "There was an error connecting to the tutor. Please try again.",
+    copyBtn: "Copy",
+    copied: "Copied!",
+    clearChat: "Clear chat",
+    thinking: "Thinking",
+  },
+};
 
-  useEffect(() => {
-    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
-  }, [messages]);
-
-  const pickRandomProblem = () => {
-    const pool = PROBLEMS.filter(p => p.grade === grade);
-    const p = pool[Math.floor(Math.random() * pool.length)];
-    setProblem(p);
-    setSelectedAnswer(null);
-    setShowResult(false);
-    setMessages([]);
-    setSessionComplete(false);
-  };
-
-  const handleAnswer = async (choice: string) => {
-    if (showResult || !problem) return;
-    setSelectedAnswer(choice);
-    setShowResult(true);
-
-    const isCorrect = choice === problem.answerKey;
-    const newScore = { correct: score.correct + (isCorrect ? 1 : 0), total: score.total + 1 };
-    setScore(newScore);
-
-    const systemPrompt = lang === 'en'
-      ? `You are GuapoMathTutor, a friendly, encouraging bilingual math tutor for Texas 7th and 8th graders. The student is working on STAAR math. The current problem is:
-
-TEKS: ${problem.teks}
-Subject: ${problem.subject}
-Question: ${problem.questionEN}
-Correct answer: ${problem.answerKey}
-Student's answer: ${choice}
-Result: ${isCorrect ? 'CORRECT' : 'INCORRECT'}
-
-${isCorrect
-  ? 'Congratulate the student warmly and briefly explain WHY the answer is correct in 2-3 sentences. Encourage them to keep going!'
-  : `Gently tell the student their answer was incorrect. The correct answer is ${problem.answerKey}. Walk through these solution steps: ${problem.solutionStepsEN.join(' → ')}. Be encouraging and patient.`}
-
-Keep your response under 150 words. Be warm and use encouraging language. End with a question or encouragement.`
-      : `Eres GuapoMathTutor, un tutor de matemáticas amigable y alentador para estudiantes de 7mo y 8vo grado en Texas. El estudiante está practicando STAAR math. El problema actual es:
-
-TEKS: ${problem.teks}
-Materia: ${problem.subject}
-Pregunta: ${problem.questionES}
-Respuesta correcta: ${problem.answerKey}
-Respuesta del estudiante: ${choice}
-Resultado: ${isCorrect ? 'CORRECTO' : 'INCORRECTO'}
-
-${isCorrect
-  ? 'Felicita al estudiante calurosamente y explica brevemente POR QUÉ la respuesta es correcta en 2-3 oraciones. ¡Anímalo a seguir!'
-  : `Dile amablemente al estudiante que su respuesta fue incorrecta. La respuesta correcta es ${problem.answerKey}. Explica los pasos: ${problem.solutionStepsES.join(' → ')}. Sé alentador y paciente.`}
-
-Mantén tu respuesta en menos de 150 palabras. Usa lenguaje cálido y alentador. Termina con una pregunta o ánimo.`;
-
-    setAiLoading(true);
-    try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 300,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: isCorrect ? 'I got it right!' : 'Help me understand.' }],
-        }),
-      });
-      const data = await response.json();
-      const aiText = data.content?.[0]?.text ?? 'Great job working through this problem!';
-      setMessages([{ role: 'assistant', content: aiText }]);
-    } catch {
-      setMessages([{ role: 'assistant', content: isCorrect
-        ? t('🎉 Correct! Great work!', '🎉 ¡Correcto! ¡Excelente trabajo!')
-        : t(`The correct answer is ${problem.answerKey}. Keep practicing!`, `La respuesta correcta es ${problem.answerKey}. ¡Sigue practicando!`)
-      }]);
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
-  const sendMessage = async () => {
-    if (!input.trim() || !problem) return;
-    const userMsg = input.trim();
-    setInput('');
-    const newMessages: Message[] = [...messages, { role: 'user', content: userMsg }];
-    setMessages(newMessages);
-    setAiLoading(true);
-
-    try {
-      const sysPrompt = lang === 'en'
-        ? `You are GuapoMathTutor, a friendly math tutor for Texas 7th-8th graders. The student is working on TEKS ${problem.teks}: "${problem.questionEN}". Help them understand the math concept. Be concise (under 120 words), encouraging, and step-by-step when needed.`
-        : `Eres GuapoMathTutor, un tutor amigable de matemáticas para estudiantes de 7mo-8vo grado en Texas. El estudiante trabaja en TEKS ${problem.teks}: "${problem.questionES}". Ayúdalo a entender el concepto. Sé conciso (menos de 120 palabras), alentador y usa pasos cuando sea necesario.`;
-
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 250,
-          system: sysPrompt,
-          messages: newMessages.map(m => ({ role: m.role, content: m.content })),
-        }),
-      });
-      const data = await response.json();
-      const aiText = data.content?.[0]?.text ?? t('Let me help you with that!', '¡Déjame ayudarte con eso!');
-      setMessages([...newMessages, { role: 'assistant', content: aiText }]);
-    } catch {
-      setMessages([...newMessages, { role: 'assistant', content: t('Sorry, I had trouble connecting. Try again!', '¡Lo siento, tuve un problema de conexión. ¡Intenta de nuevo!') }]);
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
-  const finishSession = async () => {
-    if (score.total === 0) return;
-    try {
-      await addDoc(collection(db, 'sessions'), {
-        studentId: user?.uid ?? 'demo',
-        studentName: user?.displayName ?? 'Demo Student',
-        course: t('7th Math', '7mo Math'),
-        teks: problem?.teks ?? 'mixed',
-        subject: problem?.subject ?? 'Mixed',
-        grade,
-        score: Math.round((score.correct / score.total) * 100),
-        totalProblems: score.total,
-        correctAnswers: score.correct,
-        timeSpentMinutes: 10,
-        completedAt: Timestamp.now(),
-      });
-    } catch (e) { console.error(e); }
-    setSessionComplete(true);
-  };
-
-  if (sessionComplete) {
-    const pct = Math.round((score.correct / score.total) * 100);
-    return (
-      <div className="app-shell">
-        <aside className="sidebar">
-          <div className="sidebar-logo"><span>🧮</span><span className="sidebar-brand">GuapoMath</span></div>
-          <nav className="sidebar-nav">
-            <button className="nav-item" onClick={() => onNavigate('dashboard')}><span>📊</span> {t('Dashboard', 'Panel')}</button>
-            <button className="nav-item" onClick={() => onNavigate('problems')}><span>📝</span> {t('Problems', 'Banco')}</button>
-            <button className="nav-item active"><span>🤖</span> {t('AI Tutor', 'Tutor IA')}</button>
-          </nav>
-        </aside>
-        <main className="main-content center-content">
-          <div className="session-complete-card">
-            <div className="complete-icon">{pct >= 70 ? '🎉' : '💪'}</div>
-            <h2>{pct >= 70 ? t('Great Job!', '¡Excelente!') : t('Keep Practicing!', '¡Sigue Practicando!')}</h2>
-            <div className="score-circle">
-              <span className="score-big">{pct}%</span>
-              <span className="score-fraction">{score.correct}/{score.total}</span>
-            </div>
-            <p>{pct >= 70
-              ? t('You passed this session! Your teacher can see your progress.', '¡Pasaste esta sesión! Tu maestra puede ver tu progreso.')
-              : t('Good effort! Review the problems and try again.', '¡Buen esfuerzo! Repasa los problemas e intenta de nuevo.')
-            }</p>
-            <div className="complete-actions">
-              <button className="btn-primary" onClick={() => { setScore({ correct: 0, total: 0 }); setSessionComplete(false); setProblem(null); }}>
-                {t('New Session', 'Nueva Sesión')}
-              </button>
-              <button className="btn-secondary" onClick={() => onNavigate('dashboard')}>
-                {t('Back to Dashboard', 'Volver al Panel')}
-              </button>
-            </div>
-          </div>
-        </main>
-      </div>
-    );
+// ── Parse steps from Claude response ─────────────────────────
+function parseSteps(text: string): Step[] {
+  const stepRegex = /(?:paso|step)\s*(\d+)[:\.]?\s*([^\n]+)/gi;
+  const steps: Step[] = [];
+  let match;
+  while ((match = stepRegex.exec(text)) !== null) {
+    steps.push({
+      number: parseInt(match[1]),
+      title: match[2].trim(),
+      content: match[2].trim(),
+      done: false,
+    });
   }
+  return steps;
+}
 
+// ── Typing dots animation ─────────────────────────────────────
+function TypingDots({ label }: { label: string }) {
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="sidebar-logo"><span>🧮</span><span className="sidebar-brand">GuapoMath</span></div>
-        <nav className="sidebar-nav">
-          <button className="nav-item" onClick={() => onNavigate('dashboard')}><span>📊</span> {t('Dashboard', 'Panel')}</button>
-          <button className="nav-item" onClick={() => onNavigate('problems')}><span>📝</span> {t('Problems', 'Banco')}</button>
-          <button className="nav-item active"><span>🤖</span> {t('AI Tutor', 'Tutor IA')}</button>
-          <button className="nav-item" onClick={() => onNavigate('reports')}><span>📈</span> {t('Reports', 'Reportes')}</button>
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="session-score-sidebar">
-            <p>{t('Score', 'Puntaje')}: <strong>{score.correct}/{score.total}</strong></p>
-            {score.total > 0 && (
-              <button className="btn-finish" onClick={finishSession}>
-                {t('Finish Session', 'Terminar Sesión')}
-              </button>
-            )}
-          </div>
-        </div>
-      </aside>
-
-      <main className="main-content">
-        <header className="content-header">
-          <div>
-            <h1 className="content-title">🤖 {t('AI Math Tutor', 'Tutor de Matemáticas IA')}</h1>
-            <p className="content-subtitle">{t('Powered by Claude · Step-by-step help', 'Desarrollado con Claude · Ayuda paso a paso')}</p>
-          </div>
-        </header>
-
-        {!problem ? (
-          <div className="tutor-setup">
-            <div className="setup-card">
-              <h2>{t('Choose Your Practice', 'Elige tu Práctica')}</h2>
-              <div className="setup-grade">
-                <label>{t('Grade Level', 'Nivel de Grado')}</label>
-                <div className="grade-toggle large">
-                  <button className={grade === 7 ? 'active' : ''} onClick={() => setGrade(7)}>7th Grade</button>
-                  <button className={grade === 8 ? 'active' : ''} onClick={() => setGrade(8)}>8th Grade</button>
-                </div>
-              </div>
-              <button className="btn-primary large" onClick={pickRandomProblem}>
-                {t('Start Tutor Session →', 'Iniciar Sesión de Tutor →')}
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="tutor-layout">
-            {/* Problem Panel */}
-            <div className="problem-panel">
-              <div className="problem-header">
-                <span className="teks-badge">{problem.teks}</span>
-                <span className="problem-subject">{problem.subject}</span>
-                <button className="btn-next-problem" onClick={pickRandomProblem}>
-                  {t('Next Problem →', 'Siguiente Problema →')}
-                </button>
-              </div>
-
-              <p className="problem-question">
-                {lang === 'en' ? problem.questionEN : problem.questionES}
-              </p>
-
-              {problem.choices && (
-                <div className="choices-grid">
-                  {problem.choices.map(c => {
-                    let cls = 'choice-btn';
-                    if (showResult) {
-                      if (c.label === problem.answerKey) cls += ' correct';
-                      else if (c.label === selectedAnswer) cls += ' wrong';
-                    }
-                    return (
-                      <button
-                        key={c.label}
-                        className={cls}
-                        onClick={() => handleAnswer(c.label)}
-                        disabled={showResult}
-                      >
-                        <span className="choice-letter">{c.label}</span>
-                        <span>{lang === 'en' ? c.textEN : c.textES}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {showResult && (
-                <div className={`result-banner ${selectedAnswer === problem.answerKey ? 'correct' : 'incorrect'}`}>
-                  {selectedAnswer === problem.answerKey
-                    ? t('✓ Correct!', '✓ ¡Correcto!')
-                    : t(`✗ The answer is ${problem.answerKey}`, `✗ La respuesta es ${problem.answerKey}`)}
-                </div>
-              )}
-            </div>
-
-            {/* Chat Panel */}
-            <div className="chat-panel">
-              <div className="chat-header">
-                <span className="chat-avatar">🤖</span>
-                <div>
-                  <p className="chat-name">GuapoMathTutor</p>
-                  <p className="chat-powered">{t('Powered by Claude', 'Desarrollado con Claude')}</p>
-                </div>
-              </div>
-
-              <div className="chat-messages" ref={chatRef}>
-                {messages.length === 0 && !aiLoading && (
-                  <div className="chat-empty">
-                    <p>👋 {t('Answer a question to get started!', '¡Responde una pregunta para comenzar!')}</p>
-                    <p className="chat-hint">{t('I\'ll give you step-by-step feedback and answer your questions.', 'Te daré retroalimentación paso a paso y responderé tus preguntas.')}</p>
-                  </div>
-                )}
-                {messages.map((m, i) => (
-                  <div key={i} className={`message ${m.role}`}>
-                    {m.role === 'assistant' && <span className="msg-avatar">🤖</span>}
-                    <div className="message-bubble">{m.content}</div>
-                  </div>
-                ))}
-                {aiLoading && (
-                  <div className="message assistant">
-                    <span className="msg-avatar">🤖</span>
-                    <div className="message-bubble typing">
-                      <span /><span /><span />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="chat-input-area">
-                <input
-                  className="chat-input"
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && sendMessage()}
-                  placeholder={t('Ask me anything about this problem...', 'Pregúntame cualquier cosa sobre este problema...')}
-                />
-                <button className="chat-send" onClick={sendMessage} disabled={aiLoading}>
-                  {t('Send', 'Enviar')}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
+    <div style={dotStyles.wrap}>
+      <div style={dotStyles.dotsRow}>
+        {[0, 1, 2].map((i) => (
+          <div
+            key={i}
+            style={{
+              ...dotStyles.dot,
+              animationDelay: `${i * 0.18}s`,
+            }}
+          />
+        ))}
+      </div>
+      <span style={dotStyles.label}>{label}</span>
     </div>
   );
 }
+
+const dotStyles: Record<string, React.CSSProperties> = {
+  wrap: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "10px 0 2px",
+  },
+  dotsRow: { display: "flex", gap: 4 },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    background: "var(--esl-orange)",
+    animation: "esl-bounce 1.0s ease-in-out infinite",
+  },
+  label: {
+    fontSize: 12,
+    color: "var(--esl-text-muted)",
+    fontStyle: "italic",
+  },
+};
+
+// ── Message bubble ────────────────────────────────────────────
+function MessageBubble({
+  msg,
+  tutorName,
+  youLabel,
+}: {
+  msg: Message;
+  tutorName: string;
+  youLabel: string;
+}) {
+  const isTutor = msg.role === "tutor";
+
+  // Format markdown-lite: bold **text**, bullet lists, paso/step
+  const formatContent = (text: string) => {
+    return text
+      .split("\n")
+      .map((line, i) => {
+        // Bold
+        const formatted = line.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+        // Bullet
+        const isBullet = line.trim().startsWith("- ") || line.trim().startsWith("• ");
+        // Step header
+        const isStep = /^(paso|step)\s*\d+/i.test(line.trim());
+
+        if (isStep) {
+          return (
+            <div
+              key={i}
+              style={mb.stepLine}
+              dangerouslySetInnerHTML={{ __html: formatted }}
+            />
+          );
+        }
+        if (isBullet) {
+          return (
+            <div key={i} style={mb.bulletLine}>
+              <span style={mb.bulletDot}>•</span>
+              <span dangerouslySetInnerHTML={{ __html: formatted.replace(/^[-•]\s*/, "") }} />
+            </div>
+          );
+        }
+        return (
+          <p
+            key={i}
+            style={mb.textLine}
+            dangerouslySetInnerHTML={{ __html: formatted }}
+          />
+        );
+      });
+  };
+
+  return (
+    <div style={{ ...mb.wrap, ...(isTutor ? mb.wrapTutor : mb.wrapUser) }}>
+      {/* Avatar */}
+      {isTutor && (
+        <div style={mb.tutorAvatar}>
+          <ESLLogo size={20} />
+        </div>
+      )}
+
+      <div style={{ maxWidth: "80%", display: "flex", flexDirection: "column", gap: 4 }}>
+        {/* Name + time */}
+        <div style={{ ...mb.meta, ...(isTutor ? {} : { justifyContent: "flex-end" }) }}>
+          <span style={mb.sender}>{isTutor ? tutorName : youLabel}</span>
+          <span style={mb.time}>
+            {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </span>
+        </div>
+
+        {/* Bubble */}
+        <div style={isTutor ? mb.tutorBubble : mb.userBubble}>
+          {msg.isLoading ? (
+            <TypingDots label="" />
+          ) : (
+            <div style={mb.content}>{formatContent(msg.content)}</div>
+          )}
+        </div>
+      </div>
+
+      {/* User avatar */}
+      {!isTutor && (
+        <div style={mb.userAvatar}>U</div>
+      )}
+    </div>
+  );
+}
+
+const mb: Record<string, React.CSSProperties> = {
+  wrap: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: "4px 0",
+  },
+  wrapTutor: { flexDirection: "row" },
+  wrapUser:  { flexDirection: "row-reverse" },
+  tutorAvatar: {
+    width: 34, height: 34,
+    borderRadius: "50%",
+    background: "var(--esl-beige)",
+    border: "1.5px solid var(--esl-beige-dark)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    marginTop: 18,
+  },
+  userAvatar: {
+    width: 34, height: 34,
+    borderRadius: "50%",
+    background: "var(--esl-blue-light)",
+    color: "var(--esl-blue-dark)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 13,
+    fontWeight: 700,
+    flexShrink: 0,
+    marginTop: 18,
+    fontFamily: "var(--font-display)",
+  },
+  meta: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+  },
+  sender: {
+    fontSize: 11,
+    fontWeight: 700,
+    color: "var(--esl-text-secondary)",
+  },
+  time: {
+    fontSize: 10,
+    color: "var(--esl-text-muted)",
+  },
+  tutorBubble: {
+    background: "var(--esl-beige)",
+    borderRadius: "0 14px 14px 14px",
+    padding: "12px 16px",
+    borderLeft: "3px solid var(--esl-orange)",
+  },
+  userBubble: {
+    background: "var(--esl-blue)",
+    borderRadius: "14px 0 14px 14px",
+    padding: "12px 16px",
+  },
+  content: { display: "flex", flexDirection: "column", gap: 4 },
+  textLine: {
+    fontSize: 14,
+    lineHeight: 1.65,
+    color: "var(--esl-brown-dark)",
+    margin: 0,
+  },
+  stepLine: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "var(--esl-orange-dark)",
+    padding: "4px 0 2px",
+    fontFamily: "var(--font-display)",
+  },
+  bulletLine: {
+    display: "flex",
+    gap: 6,
+    fontSize: 14,
+    color: "var(--esl-brown-dark)",
+    lineHeight: 1.5,
+    alignItems: "flex-start",
+  },
+  bulletDot: {
+    color: "var(--esl-orange)",
+    fontWeight: 700,
+    flexShrink: 0,
+    marginTop: 1,
+  },
+};
+
+// ── Step panel ────────────────────────────────────────────────
+function StepPanel({ steps, title, desc, noSteps }: {
+  steps: Step[];
+  title: string;
+  desc: string;
+  noSteps: string;
+}) {
+  const [doneMap, setDoneMap] = useState<Record<number, boolean>>({});
+
+  const toggle = (n: number) =>
+    setDoneMap((prev) => ({ ...prev, [n]: !prev[n] }));
+
+  return (
+    <div style={sp.panel}>
+      <div style={sp.header}>
+        <div style={sp.title}>{title}</div>
+        <div style={sp.desc}>{desc}</div>
+      </div>
+      {steps.length === 0 ? (
+        <div style={sp.empty}>
+          <span style={{ fontSize: 32 }}>🧮</span>
+          <p style={sp.emptyText}>{noSteps}</p>
+        </div>
+      ) : (
+        <div style={sp.list}>
+          {steps.map((step) => {
+            const done = doneMap[step.number];
+            return (
+              <div
+                key={step.number}
+                style={{ ...sp.step, ...(done ? sp.stepDone : {}) }}
+                onClick={() => toggle(step.number)}
+              >
+                <div style={{ ...sp.stepNum, ...(done ? sp.stepNumDone : {}) }}>
+                  {done ? "✓" : step.number}
+                </div>
+                <div style={sp.stepContent}>
+                  <div style={sp.stepTitle}>{step.title}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const sp: Record<string, React.CSSProperties> = {
+  panel: {
+    width: 260,
+    background: "var(--esl-white)",
+    borderLeft: "1px solid var(--esl-gray-100)",
+    display: "flex",
+    flexDirection: "column",
+    flexShrink: 0,
+  },
+  header: {
+    padding: "18px 16px 14px",
+    borderBottom: "1px solid var(--esl-gray-100)",
+  },
+  title: {
+    fontFamily: "var(--font-display)",
+    fontSize: 14,
+    fontWeight: 700,
+    color: "var(--esl-brown-dark)",
+    marginBottom: 3,
+  },
+  desc: {
+    fontSize: 11,
+    color: "var(--esl-text-muted)",
+    lineHeight: 1.5,
+  },
+  list: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 0,
+    padding: "12px 12px",
+    overflowY: "auto",
+    flex: 1,
+  },
+  step: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: "10px 10px",
+    borderRadius: 8,
+    cursor: "pointer",
+    transition: "all 0.12s",
+    marginBottom: 4,
+  },
+  stepDone: {
+    background: "var(--esl-green-muted)",
+  },
+  stepNum: {
+    width: 24, height: 24,
+    borderRadius: "50%",
+    background: "var(--esl-orange-light)",
+    color: "var(--esl-orange-dark)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 11,
+    fontWeight: 700,
+    flexShrink: 0,
+    fontFamily: "var(--font-display)",
+    transition: "all 0.15s",
+  },
+  stepNumDone: {
+    background: "var(--esl-green)",
+    color: "var(--esl-white)",
+  },
+  stepContent: { flex: 1, paddingTop: 2 },
+  stepTitle: {
+    fontSize: 12,
+    fontWeight: 500,
+    color: "var(--esl-brown-dark)",
+    lineHeight: 1.5,
+  },
+  empty: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "40px 20px",
+    gap: 12,
+    flex: 1,
+  },
+  emptyText: {
+    fontSize: 12,
+    color: "var(--esl-text-muted)",
+    textAlign: "center",
+    lineHeight: 1.6,
+  },
+};
+
+// ── Componente principal ─────────────────────────────────────
+export default function AITutor({
+  initialProblem,
+}: {
+  initialProblem?: Problem;
+}) {
+  const { lang } = useLang();
+  const { user } = useAuth();
+  const locale = (lang as "es" | "en") ?? "es";
+  const t = tr[locale];
+
+  const [messages, setMessages]   = useState<Message[]>([]);
+  const [input, setInput]         = useState("");
+  const [loading, setLoading]     = useState(false);
+  const [steps, setSteps]         = useState<Step[]>([]);
+  const [showSteps, setShowSteps] = useState(true);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef   = useRef<HTMLTextAreaElement>(null);
+
+  // Welcome message
+  useEffect(() => {
+    const welcome: Message = {
+      id: "welcome",
+      role: "tutor",
+      content: t.welcomeMsg,
+      timestamp: new Date(),
+    };
+    setMessages([welcome]);
+  }, [locale]);
+
+  // Load initial problem from ProblemBank
+  useEffect(() => {
+    if (!initialProblem) return;
+    const msg: Message = {
+      id: `init-${Date.now()}`,
+      role: "user",
+      content: initialProblem.question,
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, msg]);
+    sendToTutor(initialProblem.question, [...messages, msg]);
+  }, [initialProblem]);
+
+  // Auto scroll
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // ── Llamada a Claude API ─────────────────────────────────
+  const sendToTutor = async (userMsg: string, history: Message[]) => {
+    setLoading(true);
+
+    const loadingMsg: Message = {
+      id: `loading-${Date.now()}`,
+      role: "tutor",
+      content: "",
+      timestamp: new Date(),
+      isLoading: true,
+    };
+    setMessages((prev) => [...prev, loadingMsg]);
+
+    const systemPrompt = locale === "es"
+      ? `Eres un tutor de matemáticas amable y paciente para estudiantes de 7mo y 8vo grado de ESL Muñoz Constanzo. 
+         Explica cada problema STAAR paso a paso (usa "Paso 1:", "Paso 2:", etc.). 
+         Usa lenguaje simple y animador. Responde en español a menos que el alumno escriba en inglés.
+         Cuando sea posible, conecta los conceptos con los TEKS de Texas.
+         Sé breve pero claro. Usa emojis con moderación para hacer la explicación más amigable.`
+      : `You are a kind and patient math tutor for 7th and 8th grade students at ESL Muñoz Constanzo.
+         Explain each STAAR problem step by step (use "Step 1:", "Step 2:", etc.).
+         Use simple, encouraging language. Respond in English unless the student writes in Spanish.
+         When possible, connect concepts to Texas TEKS standards.
+         Be concise but clear. Use emojis sparingly to make explanations friendly.`;
+
+    // Build conversation history for API
+    const apiMessages = history
+      .filter((m) => !m.isLoading)
+      .map((m) => ({
+        role: m.role === "tutor" ? "assistant" : "user",
+        content: m.content,
+      }));
+
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: systemPrompt,
+          messages: apiMessages,
+        }),
+      });
+
+      const data = await response.json();
+      const reply = data.content
+        ?.map((c: { type: string; text?: string }) => (c.type === "text" ? c.text : ""))
+        .filter(Boolean)
+        .join("\n") ?? t.errorMsg;
+
+      // Extract steps
+      const parsedSteps = parseSteps(reply);
+      if (parsedSteps.length > 0) setSteps(parsedSteps);
+
+      const tutorMsg: Message = {
+        id: `tutor-${Date.now()}`,
+        role: "tutor",
+        content: reply,
+        timestamp: new Date(),
+      };
+
+      setMessages((prev) => prev.filter((m) => !m.isLoading).concat(tutorMsg));
+    } catch {
+      const errMsg: Message = {
+        id: `err-${Date.now()}`,
+        role: "tutor",
+        content: t.errorMsg,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => prev.filter((m) => !m.isLoading).concat(errMsg));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSend = () => {
+    const text = input.trim();
+    if (!text || loading) return;
+
+    const userMsg: Message = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content: text,
+      timestamp: new Date(),
+    };
+
+    const updated = [...messages, userMsg];
+    setMessages(updated);
+    setInput("");
+    inputRef.current?.focus();
+    sendToTutor(text, updated);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const handleNewChat = () => {
+    setMessages([{
+      id: "welcome-new",
+      role: "tutor",
+      content: t.welcomeMsg,
+      timestamp: new Date(),
+    }]);
+    setSteps([]);
+    setInput("");
+  };
+
+  const handleSuggestion = (s: string) => {
+    setInput(s);
+    inputRef.current?.focus();
+  };
+
+  const showSuggestions = messages.length <= 1;
+
+  return (
+    <>
+      {/* keyframes para dots */}
+      <style>{`
+        @keyframes esl-bounce {
+          0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+          40% { transform: translateY(-5px); opacity: 1; }
+        }
+      `}</style>
+
+      <div style={s.root}>
+
+        {/* ── Panel izquierdo: chat ── */}
+        <div style={s.chatPanel}>
+
+          {/* Header */}
+          <div style={s.chatHeader}>
+            <div style={s.headerLeft}>
+              <div style={s.headerAvatar}><ESLLogo size={22} /></div>
+              <div>
+                <div style={s.headerTitle}>{t.tutorName}</div>
+                <div style={s.headerStatus}>
+                  <div style={{ ...s.statusDot, background: loading ? "var(--esl-orange)" : "var(--esl-green)" }} />
+                  {loading ? t.thinking + "..." : (locale === "es" ? "En línea" : "Online")}
+                </div>
+              </div>
+            </div>
+            <div style={s.headerActions}>
+              <button style={s.headerBtn} onClick={handleNewChat} title={t.newChat}>
+                ✦ {t.newChat}
+              </button>
+              <button
+                style={{ ...s.headerBtn, ...(showSteps ? s.headerBtnActive : {}) }}
+                onClick={() => setShowSteps((v) => !v)}
+              >
+                {locale === "es" ? "📋 Pasos" : "📋 Steps"}
+              </button>
+            </div>
+          </div>
+
+          {/* Problem badge if loaded */}
+          {initialProblem && (
+            <div style={s.problemBanner}>
+              <span style={s.problemBannerIcon}>📚</span>
+              <div style={s.problemBannerText}>
+                <span style={s.problemBannerTeks}>{initialProblem.teks}</span>
+                <span style={s.problemBannerQ}>{initialProblem.question.slice(0, 80)}…</span>
+              </div>
+            </div>
+          )}
+
+          {/* Messages */}
+          <div style={s.messagesArea}>
+            {messages.map((msg) => (
+              <MessageBubble
+                key={msg.id}
+                msg={msg}
+                tutorName={t.tutorName}
+                youLabel={t.you}
+              />
+            ))}
+
+            {/* Suggestions */}
+            {showSuggestions && (
+              <div style={s.suggestionsWrap}>
+                <div style={s.suggestionsLabel}>
+                  {locale === "es" ? "Sugerencias para empezar:" : "Suggestions to get started:"}
+                </div>
+                <div style={s.suggestionsList}>
+                  {t.suggestions.map((s) => (
+                    <button
+                      key={s}
+                      style={sugg.btn}
+                      onClick={() => handleSuggestion(s)}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Input area */}
+          <div style={s.inputArea}>
+            <div style={s.inputWrap}>
+              <textarea
+                ref={inputRef}
+                style={s.textarea}
+                placeholder={t.inputPlaceholder}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                rows={2}
+              />
+              <button
+                style={{
+                  ...s.sendBtn,
+                  ...((!input.trim() || loading) ? s.sendBtnDisabled : {}),
+                }}
+                onClick={handleSend}
+                disabled={!input.trim() || loading}
+              >
+                {loading
+                  ? <div style={s.spinner} />
+                  : <span style={{ fontSize: 18 }}>↑</span>
+                }
+              </button>
+            </div>
+            <div style={s.inputHint}>
+              {locale === "es"
+                ? "Enter para enviar · Shift+Enter para nueva línea"
+                : "Enter to send · Shift+Enter for new line"}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Panel derecho: steps ── */}
+        {showSteps && (
+          <StepPanel
+            steps={steps}
+            title={t.steps}
+            desc={t.stepsDesc}
+            noSteps={t.noSteps}
+          />
+        )}
+      </div>
+    </>
+  );
+}
+
+// ── Estilos ──────────────────────────────────────────────────
+const s: Record<string, React.CSSProperties> = {
+  root: {
+    display: "flex",
+    height: "calc(100vh - 0px)",
+    fontFamily: "var(--font-body)",
+    background: "var(--esl-off-white)",
+    overflow: "hidden",
+  },
+
+  // Chat panel
+  chatPanel: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+    background: "var(--esl-white)",
+  },
+
+  // Header
+  chatHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "14px 20px",
+    borderBottom: "1px solid var(--esl-gray-100)",
+    background: "var(--esl-white)",
+    flexShrink: 0,
+  },
+  headerLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+  },
+  headerAvatar: {
+    width: 40, height: 40,
+    borderRadius: "50%",
+    background: "var(--esl-beige)",
+    border: "1.5px solid var(--esl-beige-dark)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    fontFamily: "var(--font-display)",
+    fontSize: 14,
+    fontWeight: 700,
+    color: "var(--esl-brown-dark)",
+  },
+  headerStatus: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    fontSize: 11,
+    color: "var(--esl-text-muted)",
+  },
+  statusDot: {
+    width: 7, height: 7,
+    borderRadius: "50%",
+    transition: "background 0.3s",
+  },
+  headerActions: {
+    display: "flex",
+    gap: 8,
+  },
+  headerBtn: {
+    padding: "6px 12px",
+    borderRadius: 8,
+    border: "1px solid var(--esl-gray-200)",
+    background: "transparent",
+    color: "var(--esl-text-secondary)",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: "var(--font-body)",
+    transition: "all 0.12s",
+  },
+  headerBtnActive: {
+    background: "var(--esl-orange-muted)",
+    color: "var(--esl-orange-dark)",
+    borderColor: "var(--esl-orange-light)",
+  },
+
+  // Problem banner
+  problemBanner: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "10px 20px",
+    background: "var(--esl-blue-muted)",
+    borderBottom: "1px solid var(--esl-blue-light)",
+    flexShrink: 0,
+  },
+  problemBannerIcon: { fontSize: 16, flexShrink: 0 },
+  problemBannerText: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+    flexWrap: "wrap",
+  },
+  problemBannerTeks: {
+    fontSize: 11,
+    fontWeight: 700,
+    fontFamily: "var(--font-mono)",
+    color: "var(--esl-blue-dark)",
+    background: "var(--esl-blue-light)",
+    padding: "2px 8px",
+    borderRadius: 99,
+    flexShrink: 0,
+  },
+  problemBannerQ: {
+    fontSize: 12,
+    color: "var(--esl-blue-dark)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    flex: 1,
+  },
+
+  // Messages
+  messagesArea: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "20px 20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+
+  // Suggestions
+  suggestionsWrap: {
+    marginTop: 12,
+  },
+  suggestionsLabel: {
+    fontSize: 11,
+    color: "var(--esl-text-muted)",
+    fontWeight: 600,
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  },
+  suggestionsList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+
+  // Input
+  inputArea: {
+    padding: "14px 16px",
+    borderTop: "1px solid var(--esl-gray-100)",
+    background: "var(--esl-white)",
+    flexShrink: 0,
+  },
+  inputWrap: {
+    display: "flex",
+    gap: 10,
+    alignItems: "flex-end",
+    background: "var(--esl-gray-50)",
+    borderRadius: 14,
+    border: "1px solid var(--esl-gray-200)",
+    padding: "10px 10px 10px 16px",
+  },
+  textarea: {
+    flex: 1,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    fontSize: 14,
+    fontFamily: "var(--font-body)",
+    color: "var(--esl-text-primary)",
+    resize: "none",
+    lineHeight: 1.5,
+  },
+  sendBtn: {
+    width: 38, height: 38,
+    borderRadius: 10,
+    border: "none",
+    background: "var(--esl-orange)",
+    color: "var(--esl-white)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    flexShrink: 0,
+    fontWeight: 700,
+    transition: "all 0.12s",
+  },
+  sendBtnDisabled: {
+    background: "var(--esl-gray-200)",
+    color: "var(--esl-gray-500)",
+    cursor: "not-allowed",
+  },
+  spinner: {
+    width: 16, height: 16,
+    border: "2px solid rgba(255,255,255,0.3)",
+    borderTopColor: "white",
+    borderRadius: "50%",
+    animation: "esl-bounce 0.7s linear infinite",
+  },
+  inputHint: {
+    fontSize: 10,
+    color: "var(--esl-text-muted)",
+    marginTop: 6,
+    paddingLeft: 4,
+  },
+};
+
+const sugg: Record<string, React.CSSProperties> = {
+  btn: {
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: "1px solid var(--esl-gray-200)",
+    background: "var(--esl-white)",
+    color: "var(--esl-text-secondary)",
+    fontSize: 13,
+    fontWeight: 500,
+    cursor: "pointer",
+    fontFamily: "var(--font-body)",
+    textAlign: "left",
+    transition: "all 0.12s",
+    width: "100%",
+  },
+};
