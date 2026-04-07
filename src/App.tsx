@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./contexts/AuthContext";
 import { Layout } from "./components/Layout";
 import LoginPage from "./components/auth/LoginPage";
+import JoinPage from "./components/auth/JoinPage";
 import TeacherDashboard from "./components/dashboard/TeacherDashboard";
 import AITutor from "./components/tutor/AITutor";
 import Reports from "./components/reports/Reports";
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="/student/tutor" element={<AITutor />} />
           <Route path="/student/reports" element={<Reports />} />
         </Route>
+        <Route path="/join" element={<JoinPage />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>

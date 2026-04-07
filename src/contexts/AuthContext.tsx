@@ -4,6 +4,8 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../lib/firebase';
 import { User } from '../types';
 
+export const STUDENT_CODE = 'ALUMNO2026';
+
 interface AuthContextType {
   user: User | null;
   firebaseUser: FirebaseUser | null;
@@ -47,7 +49,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return unsub;
   }, []);
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = async (isStudent = false) => {
+    if (isStudent) sessionStorage.setItem('pendingRole', 'student');
     await signInWithPopup(auth, googleProvider);
   };
 
