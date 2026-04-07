@@ -1,49 +1,42 @@
-import { useState } from 'react';
-import { useAuth } from './contexts/AuthContext';
-import { useLang } from './contexts/LangContext';
-import LoginPage from './components/auth/LoginPage';
-import TeacherDashboard from './components/dashboard/TeacherDashboard';
-import ProblemBank from './components/problems/ProblemBank';
-import AITutor from './components/tutor/AITutor';
-import Reports from './components/reports/Reports';
-import { Problem } from './types';
-
-type View = 'dashboard' | 'problems' | 'tutor' | 'reports';
-
-export default function App() {
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useAuth } from "./contexts/AuthContext";
+import { Layout } from "./components/Layout";
+import LoginPage from "./components/auth/LoginPage";
+import TeacherDashboard from "./components/dashboard/TeacherDashboard";
+import AITutor from "./components/tutor/AITutor";
+import Reports from "./components/reports/Reports";
+import ProblemBank from "./components/problems/ProblemBank";
+function FullPageSpinner() {
+  return (<div style={{ minHeight: "100vh", background: "#0F1A2E", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ color: "#E8E8E8" }}>Cargando...</span></div>);
+}
+function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
-  const { lang } = useLang();
-  const [view, setView] = useState<View>('dashboard');
-  const [tutorProblem, setTutorProblem] = useState<Problem | null>(null);
-
-  const navigate = (v: string, data?: unknown) => {
-    setView(v as View);
-    if (v === 'tutor' && data) {
-      setTutorProblem(data as Problem);
-    } else if (v !== 'tutor') {
-      setTutorProblem(null);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="loading-screen">
-        <div className="loading-logo">
-          <span>🧮</span>
-          <p>{lang === 'en' ? 'Loading...' : 'Cargando...'}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) return <LoginPage />;
-
+  if (loading) return <FullPageSpinner />;
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
+}
+function RedirectIfAuth({ children }: { children: JSX.Element }) {
+  const { user, loading } = useAuth();
+  if (loading) return <FullPageSpinner />;
+  if (user) return <Navigate to={user.role === "teacher" ? "/teacher/dashboard" : "/student/tutor"} replace />;
+  return children;
+}
+export default function App() {
   return (
-    <>
-      {view === 'dashboard' && <TeacherDashboard onNavigate={navigate} />}
-      {view === 'problems' && <ProblemBank onNavigate={navigate} />}
-      {view === 'tutor' && <AITutor onNavigate={navigate} initialProblem={tutorProblem} />}
-      {view === 'reports' && <Reports onNavigate={navigate} />}
-    </>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Navigate to="/login" replace />} />
+        <Route path="/login" element={<RedirectIfAuth><LoginPage /></RedirectIfAuth>} />
+        <Route element={<RequireAuth><Layout /></RequireAuth>}>
+          <Route path="/teacher/dashboard" element={<TeacherDashboard />} />
+          <Route path="/teacher/tutor" element={<AITutor />} />
+          <Route path="/teacher/problems" element={<ProblemBank />} />
+          <Route path="/teacher/reports" element={<Reports />} />
+          <Route path="/student/tutor" element={<AITutor />} />
+          <Route path="/student/reports" element={<Reports />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
